@@ -1,9 +1,9 @@
-scapy
 pandas
 numpy
-scikit-learn
-xgboost
-lightgbm
+scipy
+scikit-learn>=1.5
+xgboost>=2.0
+lightgbm>=4.0
+statsmodels
 matplotlib
 seaborn
-statsmodels

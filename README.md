@@ -1,155 +1,66 @@
-# MARSIM: ML vs MANA — GPS Spoofing Detection
+# Classical ML vs. rule-based GPS spoofing detection on MARSIM
 
-Comparing classical machine learning classifiers against the rule-based **[MANA framework](https://github.com/fkie-cad/mana)** for detecting GPS spoofing attacks on the **[MARSIM dataset](https://doi.org/10.3390/jmse11050928)**.
+Code for the paper *Classical machine learning versus rule-based GPS spoofing detection at the NMEA level: benchmark, generalization limits, and a hybrid architecture*.
 
-## Key Findings
+Four classifiers (Random Forest, SVM, XGBoost, LightGBM) are compared with the rule-based [MANA](https://github.com/fkie-cad/mana) framework on the [MARSIM](https://doi.org/10.5281/zenodo.8202802) dataset (43,320 labelled NMEA recordings).
 
-- **4 ML classifiers** (Random Forest, XGBoost, LightGBM, SVM) are trained on statistical features extracted from NMEA-0183 data and compared against the published **MANA** rule-based baseline.
-- The core analysis focuses on **Scenario A3** (advanced simulator attacker with gradual position drift), where MANA's detection performance degrades at low drift speeds while ML classifiers maintain robust detection.
-- Per-parameter heatmaps and detection-cliff curves reveal precisely where and why MANA fails.
+## Data
 
-## Dataset
+The extracted features and the MANA predictions used in the paper are archived at [10.5281/zenodo.22133265](https://doi.org/10.5281/zenodo.22133265). Place `marsim_features.csv` and `mana_predictions.csv` in `data/`; their hashes are checked against `data/SHA256SUMS` on load.
 
-The **MARSIM dataset** (Spravil et al., 2023) contains **43,320 pcap files** of simulated maritime GPS data:
+To re-extract features or run MANA yourself, download MARSIM and point `pcap_dir` at the folder containing `dataset.json` (default `data/marsim_pcaps`), for example with a `config.json` in the repository root:
 
-| Scenario | Attacker | Parameters | Files |
-|----------|----------|------------|-------|
-| A1 | Replay (AR) | `distance_to_ship` × `time_difference` | 14,440 |
-| A2 | Meaconing (AM) | `distance_to_ship` × `delay` | 14,440 |
-| A3 | Simulator (AS) | `shift_angle` × `shift_speed` | 14,440 |
-
-Each scenario is 50/50 balanced (spoofed vs. unspoofed) with 19×19 parameter combinations × 20 repetitions.
-
-> **Note:** The dataset is not included in this repository due to size (~560MB compressed, ~43K files). Download it from [Zenodo (DOI: 10.5281/zenodo.8202936)](https://doi.org/10.5281/zenodo.8202936).
-
-## Pipeline
-
-```
-                    ┌────────────────┐
-  43,320 pcap files │  MARSIM Dataset│
-                    └───────┬────────┘
-                            │
-              ┌─────────────┼─────────────┐
-              ▼                           ▼
-   ┌──────────────────┐        ┌──────────────────┐
-   │ extract_features │        │ run_mana_baseline │
-   │     .py          │        │     .py           │
-   └────────┬─────────┘        └────────┬──────────┘
-            │                           │
-            ▼                           ▼
-   marsim_features.csv        mana_predictions.csv
-            │                           │
-            └─────────┬─────────────────┘
-                      ▼
-           ┌──────────────────┐
-           │ train_classifiers│
-           │     .py          │
-           └────────┬─────────┘
-                    ▼
-             results/ (CSV + PNG)
+```json
+{"pcap_dir": "/path/to/MARSIM/dataset"}
 ```
 
-### Scripts
+## Installation
 
-| Script | Purpose |
-|--------|---------|
-| `extract_features.py` | Parse pcap files → extract 138 statistical features per file → `marsim_features.csv` |
-| `run_mana_baseline.py` | Run MANA's 6 detection methods on all pcap files → `mana_predictions.csv` |
-| `train_classifiers.py` | Train ML models, evaluate all 5 classifiers, generate results tables and figures |
-
-## Methodology
-
-### Feature Extraction
-
-138 statistical features (mean, std, min, max, median) computed from NMEA sentence fields including position deltas, SOG discrepancies, COG deviations, altitude, HDOP, satellite C/N₀, clock drift, and inter-receiver distances.
-
-### Preprocessing
-
-1. **Train/test split by index** (indices 0–15 train, 16–19 test) — prevents data leakage
-2. Drop zero/near-zero variance features
-3. Median imputation for NaN values
-4. Log1p transform for highly skewed features (|skew| > 5)
-5. Winsorization at 1st/99th percentile
-6. Correlation removal (r > 0.95)
-7. StandardScaler (for SVM only; tree models use unscaled data)
-
-### Classifiers
-
-| Classifier | Key Hyperparameters |
-|------------|-------------------|
-| Random Forest | 500 trees, balanced class weights |
-| XGBoost | 500 rounds, max_depth=6, lr=0.1 |
-| LightGBM | 500 rounds, max_depth=6, lr=0.1 |
-| SVM (RBF) | C=10, subsampled to 10K for training |
-| MANA (baseline) | 6 rule-based methods with default thresholds |
-
-### Evaluation
-
-- Overall: Accuracy, Precision, Recall, F1, AUC-ROC
-- Per-scenario (A1, A2, A3) breakdown
-- Per-parameter heatmaps (19×19 grid per scenario)
-- Detection-cliff curves (F1 vs. parameter value)
-- McNemar's test for statistical significance
+```
+pip install -r requirements.txt
+pip install scapy                                   # feature extraction only
+pip install git+https://github.com/fkie-cad/mana    # MANA baseline only
+```
 
 ## Usage
 
-### Prerequisites
-
-```bash
-# Create conda environment
-conda env create -f environment.yml
-conda activate marsim_env
-conda install scipy statsmodels
-
-# Install MANA
-cd mana
-python setup.py install
-cd ..
+```
+python run_all.py                  # every experiment, figure and table
+python run_all.py --no-tune        # skip the hyperparameter search
+python run_all.py --no-windows     # skip the pcap-dependent latency experiment
 ```
 
-### Running the Pipeline
+Single steps:
 
-```bash
-# Step 1: Extract features from pcap files (~10 min)
-python extract_features.py
-
-# Step 2: Run MANA baseline on all pcap files (~30-90 min)
-python run_mana_baseline.py
-
-# Step 3: Train ML classifiers and evaluate (~5-10 min)
-python train_classifiers.py          # full pipeline
-python train_classifiers.py --skip-svm  # skip SVM (faster)
+```
+python -m marsim_ml.run --config baseline     # one experiment (see table below)
+python -m marsim_ml.extract --all-windows     # features for the latency experiment
+python -m marsim_ml.window_experiment
+python -m marsim_ml.plots
+python -m marsim_ml.tables
 ```
 
-### Output
+Results are written to `results/<config>/`, figures to `figures/`, LaTeX tables to `tables/`.
 
-All results are saved to `results/`:
+## Experiments
 
-**Tables (CSV):** `overall_results.csv`, `per_scenario_results.csv`, `a3_heatmap_data.csv`, `feature_importance.csv`, `confusion_matrices.csv`, `mcnemar_results.csv`, and more.
+| config | test set |
+|---|---|
+| `baseline` | repetition indices 16 to 19 |
+| `alt_preprocessing` | same, alternative correlation pruning, no winsorization |
+| `heldout_speed_low`, `heldout_speed_mid` | A3 shift speeds {0, 4, 8, 12} or {28, ..., 40} unseen in training |
+| `heldout_speed_interleaved`, `heldout_angle_interleaved`, `heldout_distance_A2` | alternate parameter values unseen in training |
+| `heldout_scenario_A1`, `_A2`, `_A3` | one attack scenario unseen in training |
+| `repetition_cv` | five folds over repetition indices |
+| `tuned` | repetition split, randomized hyperparameter search |
 
-**Figures (PNG, 300 DPI):** ROC curves, confusion matrices, feature importance bar chart, per-parameter heatmaps, and the key **A3 shift_speed detection-cliff curve**.
+The latency experiment (`window_experiment`) uses windows starting at attack onset, 60 s into each recording.
 
-## MANA Baseline
+## Layout
 
-[MANA](https://github.com/fkie-cad/mana) (Spravil et al., 2023) is an open-source rule-based GPS spoofing detection framework. We use 6 of its 8 detection methods:
-
-| Method | Abbreviation | Detection Principle |
-|--------|-------------|-------------------|
-| MultipleReceiversMethod | PDM | Inter-receiver distance anomaly |
-| PhysicalSpeedLimitMethod | PCC_sog | SOG exceeds 30 kn |
-| PhysicalRateOfTurnLimitMethod | PCC_rot | Rate of turn exceeds 7.5°/s |
-| PhysicalHeightLimitMethod | PCC_height | Altitude outside [-1m, +1m] |
-| TimeDriftMethod | CDM | Clock drift exceeds threshold |
-| CarrierToNoiseDensityMethod | CNM | C/N₀ outside [20, 50] dB-Hz |
-
-Two methods are excluded (`OrbitPositionsMethod`, `PhysicalEnvironmentLimitMethod`) due to missing data files.
-
-## References
-
-- Spravil, J., Hemminghaus, C., von Rechenberg, M., & Padilla, E. (2023). *Detecting Maritime GPS Spoofing Attacks Based on NMEA Sentence Integrity Monitoring.* Journal of Marine Science and Engineering, 11(5), 928. [DOI: 10.3390/jmse11050928](https://doi.org/10.3390/jmse11050928)
-- MARSIM Dataset: [Zenodo (DOI: 10.5281/zenodo.8202936)](https://doi.org/10.5281/zenodo.8202936)
-- MANA Framework: [github.com/fkie-cad/mana](https://github.com/fkie-cad/mana)
-
-## License
-
-This project uses the MARSIM dataset and MANA framework under their respective licenses. See individual repositories for details.
+```
+marsim_ml/       extraction, splits, preprocessing, models, evaluation, plots, tables
+configs/         MANA method configuration
+data/            input CSVs and their SHA-256 hashes
+run_all.py       end-to-end driver
+```
